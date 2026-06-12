@@ -2,6 +2,7 @@
 	"name": "sample-plugin",
 	"version": "0.2.0",
 	"private": true,
+	"sideEffects": ["*.css"],
 	"engines": {
 		"node": ">=22.0.0"
 	},

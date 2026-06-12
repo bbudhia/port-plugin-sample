@@ -28,6 +28,30 @@ Port API requests use **`portApiBaseUrl`** from the SDK (the **`baseUrl`** field
 yarn install
 ```
 
+### Configure `.env` for local dev
+
+Copy the template and fill in values:
+
+```bash
+cp .env.example .env
+```
+
+There are two ways to authenticate the dev harness — pick one:
+
+- **Static token** — set `PORT_DEV_TOKEN`. Simple, but the token doesn't refresh.
+- **Client credentials** — set `PORT_CLIENT_ID` + `PORT_CLIENT_SECRET`. On startup, `SimulatePort` POSTs to `/v1/auth/access_token` and uses the returned token. **Takes precedence over `PORT_DEV_TOKEN`** when both are set.
+
+| Variable | Used by | Notes |
+|---|---|---|
+| `PORT_DEV_TOKEN` | `SimulatePort` (dev only) | Static Port API token. Generate one in Port → profile → **Credentials → Generate API token**. |
+| `PORT_CLIENT_ID` | `SimulatePort` (dev only) | Client ID for the client-credentials flow. Find under Port portal → **Settings → Credentials → Client credentials**. |
+| `PORT_CLIENT_SECRET` | `SimulatePort` (dev only) | Client secret paired with `PORT_CLIENT_ID`. |
+| `PORT_DEV_BLUEPRINT_ID` | `SimulatePort` (dev only) | Blueprint identifier whose entities populate the dev entity picker. |
+| `PORT_DEV_ENTITY_IDENTIFIER` | `SimulatePort` (dev only) | Optional — entity to preselect on load. Falls back to the first entity returned. |
+| `PORT_DEV_API_BASE_URL` | `SimulatePort` (dev only) | Defaults to `http://localhost:9000`. The dev server proxies `/v1/*` to `https://api.port.io` (see `webpack.config.js`), so the default works out of the box. |
+
+All `PORT_*` variables above are inlined by `webpack.DefinePlugin` **only in development mode**. They are not present in production builds. Never commit a real `.env`.
+
 ### Development
 
 Run the dev server with hot reload on port 9000:
@@ -36,7 +60,29 @@ Run the dev server with hot reload on port 9000:
 yarn dev
 ```
 
-Open [http://localhost:9000](http://localhost:9000) to preview the plugin UI. The app expects `postMessage` from a Port host (`PLUGIN_DATA`, `PORT_TOKEN`). Standalone, the token and host context are missing until you embed the page or simulate messages from the parent window.
+Open [http://localhost:9000](http://localhost:9000) to preview the plugin UI. In production, Port embeds the plugin in an iframe and sends `PLUGIN_DATA` / `PORT_TOKEN` via `postMessage`. Locally there is no parent window, so the `SimulatePort` dev harness (described below) stands in for the host.
+
+### SimulatePort — local dev harness
+
+`src/SimulatePort.tsx` is a dev-only stand-in for Port's parent window. It renders only when `NODE_ENV === "development"` **and** the page is opened standalone (not inside an iframe). The production build replaces it with `SimulatePort.stub.tsx` via webpack's `NormalModuleReplacementPlugin`, so none of this code ships.
+
+**What it does**
+
+1. **Resolves a token.** If `PORT_CLIENT_ID` + `PORT_CLIENT_SECRET` are set, POSTs to `/v1/auth/access_token` to exchange them for an access token. Otherwise uses `PORT_DEV_TOKEN` directly.
+2. **Replies to `REQUEST_PORT_TOKEN`.** The SDK posts this on mount; `SimulatePort` responds with `PORT_TOKEN`. If the request arrives before the token fetch completes, the response is held and sent as soon as the token resolves.
+3. **Fetches entities** for `PORT_DEV_BLUEPRINT_ID` via `GET /v1/blueprints/<id>/entities` (proxied to `https://api.port.io`).
+4. **Posts `PLUGIN_DATA`** containing the selected entity, a stub `user`, `baseUrl`, and a minimal light theme — the same shape Port's host sends in production.
+5. **Renders a top toolbar** with a searchable combobox so you can switch the simulated "current entity" while developing. Selecting an entity re-posts `PLUGIN_DATA` so `usePortPluginData()` updates downstream.
+
+**Toolbar status hints**
+
+- `set PORT_DEV_TOKEN or PORT_CLIENT_ID/PORT_CLIENT_SECRET in .env` — no auth configured.
+- `fetching token…` — client-credentials POST in flight.
+- `token fetch failed — see console` — `/v1/auth/access_token` rejected the credentials.
+- `set PORT_DEV_BLUEPRINT_ID in .env` — auth ready, blueprint missing.
+- `PORT_TOKEN ready` (green) — feeding the plugin via static token. Suffixed with `(client creds)` when using the credentials flow.
+
+**Protocol parity** — the messages SimulatePort posts match the SDK contract exactly (see the *PostMessage events* section below), so code that works with the dev harness works unchanged when embedded in Port.
 
 ### Build
 
